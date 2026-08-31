@@ -72,14 +72,25 @@ jobs:
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
         run: |
+          # Resolve SHAs — use PR context when available, fall back to git for
+          # workflow_dispatch runs or any case where the PR event isn't propagated.
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          if [ -z "$BASE_SHA" ] || [ -z "$HEAD_SHA" ]; then
+            echo "No PR SHA context — falling back to git log"
+            HEAD_SHA=$(git rev-parse HEAD)
+            BASE_SHA=$(git rev-parse HEAD~1 2>/dev/null || git hash-object -t tree /dev/null)
+          fi
+          echo "Checking diff: $BASE_SHA..$HEAD_SHA"
+
           ADVISORY_FLAG=""
           if [ "${{ inputs.advisory }}" = "true" ]; then
             ADVISORY_FLAG="--advisory"
           fi
           PYTHONPATH=.arch-guard python -m arch_guard.check \
             --contract "${{ inputs.contract }}" \
-            --diff-base "${{ github.event.pull_request.base.sha }}" \
-            --diff-head "${{ github.event.pull_request.head.sha }}" \
+            --diff-base "$BASE_SHA" \
+            --diff-head "$HEAD_SHA" \
             --sarif-out findings.sarif \
             --summary-out "$GITHUB_STEP_SUMMARY" \
             $ADVISORY_FLAG
