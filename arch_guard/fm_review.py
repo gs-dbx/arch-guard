@@ -85,8 +85,8 @@ def _build_user_message(diff_text, existing_findings):
 
 def _call_fm_api(system_prompt, user_message):
     host = os.environ.get("DATABRICKS_HOST", "").rstrip("/")
-    endpoint = os.environ.get("FM_ENDPOINT", "")
-    if not host or not endpoint:
+    model = os.environ.get("FM_ENDPOINT", "")   # e.g. system.ai.claude-opus-5
+    if not host or not model:
         return None
 
     token = _get_token()
@@ -94,8 +94,10 @@ def _call_fm_api(system_prompt, user_message):
         print("arch-guard [fm]: no auth token available — skipping FM review.")
         return None
 
-    url = "{}/serving-endpoints/{}/invocations".format(host, endpoint)
+    # Foundation Model APIs are served via Unity AI Gateway
+    url = "{}/ai-gateway/mlflow/v1/chat/completions".format(host)
     payload = json.dumps({
+        "model": model,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user",   "content": user_message},
@@ -116,6 +118,10 @@ def _call_fm_api(system_prompt, user_message):
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
             return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()[:500]
+        print("arch-guard [fm]: API call failed — {} {} — {}".format(e.code, e.reason, body))
+        return None
     except Exception as e:
         print("arch-guard [fm]: API call failed — {}".format(e))
         return None

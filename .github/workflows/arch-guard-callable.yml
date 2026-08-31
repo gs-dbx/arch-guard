@@ -137,6 +137,15 @@ jobs:
           fi
           echo "Checking diff: $BASE_SHA..$HEAD_SHA"
 
+          # Diagnostic: check AI Gateway is reachable from this runner
+          if [ -n "$DATABRICKS_TOKEN" ] && [ -n "$FM_ENDPOINT" ]; then
+            ag_status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
+              -H "Authorization: Bearer $DATABRICKS_TOKEN" \
+              "${DATABRICKS_HOST}/ai-gateway/mlflow/v1/chat/completions" \
+              2>/dev/null || echo "000")
+            echo "arch-guard [fm]: AI Gateway probe: $ag_status"
+          fi
+
           ADVISORY_FLAG=""
           if [ "${{ inputs.advisory }}" = "true" ]; then
             ADVISORY_FLAG="--advisory"
