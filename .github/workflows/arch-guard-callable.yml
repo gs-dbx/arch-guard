@@ -102,28 +102,12 @@ jobs:
           fi
 
           echo "arch-guard: requesting token for service principal ${DATABRICKS_CLIENT_ID}..."
-          token=$(python3 - <<'PYEOF'
-import urllib.request, urllib.parse, base64, json, os, sys
-
-host = os.environ["DATABRICKS_HOST"].rstrip("/")
-cid  = os.environ["DATABRICKS_CLIENT_ID"]
-csec = os.environ["DATABRICKS_CLIENT_SECRET"]
-
-creds = base64.b64encode(f"{cid}:{csec}".encode()).decode()
-body  = urllib.parse.urlencode({"grant_type": "client_credentials", "scope": "all-apis"}).encode()
-req   = urllib.request.Request(
-    f"{host}/oidc/v1/token",
-    data=body,
-    headers={"Authorization": f"Basic {creds}", "Content-Type": "application/x-www-form-urlencoded"},
-)
-try:
-    resp = urllib.request.urlopen(req, timeout=15)
-    print(json.loads(resp.read())["access_token"])
-except Exception as e:
-    print(f"", end="")  # empty — caller checks length
-    sys.stderr.write(f"token exchange error: {e}\n")
-PYEOF
-          )
+          token=$(curl -s -X POST \
+            -u "${DATABRICKS_CLIENT_ID}:${DATABRICKS_CLIENT_SECRET}" \
+            -d "grant_type=client_credentials&scope=all-apis" \
+            "${DATABRICKS_HOST}/oidc/v1/token" \
+            | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null \
+            || echo "")
 
           if [ -n "$token" ]; then
             echo "DATABRICKS_TOKEN=$token" >> $GITHUB_ENV
