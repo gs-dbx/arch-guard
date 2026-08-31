@@ -92,20 +92,11 @@ jobs:
           fi
 
           echo "arch-guard: checking connectivity to $DATABRICKS_HOST ..."
-          http_code=$(python3 -c "
-import urllib.request, os
-try:
-    r = urllib.request.urlopen(os.environ['DATABRICKS_HOST'], timeout=10)
-    print(r.status)
-except urllib.error.HTTPError as e:
-    print(e.code)
-except Exception as e:
-    print(f'UNREACHABLE: {e}')
-" 2>&1)
+          http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$DATABRICKS_HOST" 2>/dev/null || echo "000")
           echo "arch-guard: workspace response: $http_code"
-          if echo "$http_code" | grep -q "UNREACHABLE"; then
+          if [ "$http_code" = "000" ]; then
             echo "arch-guard: workspace is not reachable from this runner."
-            echo "arch-guard: if the workspace has an IP access list, add GitHub runner IPs or use a self-hosted runner."
+            echo "arch-guard: if the workspace has an IP access list, use a self-hosted runner or add GitHub runner IP ranges."
             echo "arch-guard: UC grounding and FM review will be skipped."
             exit 0
           fi
