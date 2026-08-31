@@ -22,8 +22,10 @@ on:
     secrets:
       DATABRICKS_HOST:
         required: false
+      DATABRICKS_TOKEN:
+        required: false        # PAT — simplest auth; takes precedence if set
       DATABRICKS_CLIENT_ID:
-        required: false
+        required: false        # M2M OAuth — used when DATABRICKS_TOKEN is absent
       DATABRICKS_CLIENT_SECRET:
         required: false
       FM_SERVING_ENDPOINT:
@@ -69,25 +71,76 @@ jobs:
 
       - name: Obtain Databricks token
         env:
+          DATABRICKS_TOKEN_PAT: ${{ secrets.DATABRICKS_TOKEN }}
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
         run: |
-          if [ -z "$DATABRICKS_HOST" ] || [ -z "$DATABRICKS_CLIENT_ID" ]; then
-            echo "arch-guard: DATABRICKS_HOST or DATABRICKS_CLIENT_ID not set."
-            echo "arch-guard: UC grounding and FM review will be skipped."
-            echo "arch-guard: To enable, set DATABRICKS_HOST, DATABRICKS_CLIENT_ID, and DATABRICKS_CLIENT_SECRET secrets."
+          # Prefer a direct PAT if one is set (useful for local testing / fallback).
+          if [ -n "$DATABRICKS_TOKEN_PAT" ]; then
+            echo "DATABRICKS_TOKEN=$DATABRICKS_TOKEN_PAT" >> $GITHUB_ENV
+            echo "arch-guard: using DATABRICKS_TOKEN (PAT)."
             exit 0
           fi
-          echo "arch-guard: exchanging M2M credentials for token..."
-          token=$(databricks auth token --host "$DATABRICKS_HOST" 2>/dev/null \
-            | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null || echo "")
+
+          # Standard path: M2M OAuth with service principal credentials.
+          if [ -z "$DATABRICKS_HOST" ] || [ -z "$DATABRICKS_CLIENT_ID" ] || [ -z "$DATABRICKS_CLIENT_SECRET" ]; then
+            echo "arch-guard: Databricks credentials not configured."
+            echo "arch-guard: UC grounding and FM review will be skipped."
+            echo "arch-guard: to enable, set DATABRICKS_HOST, DATABRICKS_CLIENT_ID, and DATABRICKS_CLIENT_SECRET secrets."
+            exit 0
+          fi
+
+          echo "arch-guard: checking connectivity to $DATABRICKS_HOST ..."
+          http_code=$(python3 -c "
+import urllib.request, os
+try:
+    r = urllib.request.urlopen(os.environ['DATABRICKS_HOST'], timeout=10)
+    print(r.status)
+except urllib.error.HTTPError as e:
+    print(e.code)
+except Exception as e:
+    print(f'UNREACHABLE: {e}')
+" 2>&1)
+          echo "arch-guard: workspace response: $http_code"
+          if echo "$http_code" | grep -q "UNREACHABLE"; then
+            echo "arch-guard: workspace is not reachable from this runner."
+            echo "arch-guard: if the workspace has an IP access list, add GitHub runner IPs or use a self-hosted runner."
+            echo "arch-guard: UC grounding and FM review will be skipped."
+            exit 0
+          fi
+
+          echo "arch-guard: requesting token for service principal ${DATABRICKS_CLIENT_ID}..."
+          token=$(python3 - <<'PYEOF'
+import urllib.request, urllib.parse, base64, json, os, sys
+
+host = os.environ["DATABRICKS_HOST"].rstrip("/")
+cid  = os.environ["DATABRICKS_CLIENT_ID"]
+csec = os.environ["DATABRICKS_CLIENT_SECRET"]
+
+creds = base64.b64encode(f"{cid}:{csec}".encode()).decode()
+body  = urllib.parse.urlencode({"grant_type": "client_credentials", "scope": "all-apis"}).encode()
+req   = urllib.request.Request(
+    f"{host}/oidc/v1/token",
+    data=body,
+    headers={"Authorization": f"Basic {creds}", "Content-Type": "application/x-www-form-urlencoded"},
+)
+try:
+    resp = urllib.request.urlopen(req, timeout=15)
+    print(json.loads(resp.read())["access_token"])
+except Exception as e:
+    print(f"", end="")  # empty — caller checks length
+    sys.stderr.write(f"token exchange error: {e}\n")
+PYEOF
+          )
+
           if [ -n "$token" ]; then
             echo "DATABRICKS_TOKEN=$token" >> $GITHUB_ENV
-            echo "arch-guard: token obtained successfully."
+            echo "arch-guard: service principal token obtained successfully."
           else
             echo "arch-guard: token exchange failed — UC grounding and FM review will be skipped."
-            echo "arch-guard: check that the service principal has 'Can Query' on the FM endpoint."
+            echo "arch-guard: verify the service principal has 'Can Query' on the FM serving endpoint."
+            echo "arch-guard: verify DATABRICKS_HOST is correct (e.g. https://adb-xxx.azuredatabricks.net)."
           fi
 
       - name: Run arch-guard
