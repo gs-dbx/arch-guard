@@ -1,7 +1,7 @@
 name: arch-guard (reusable)
 
 # Called by pipeline repos via:
-#   uses: greg-skinner_data/arch-guard/.github/workflows/arch-guard-callable.yml@main
+#   uses: gs-dbx/arch-guard/.github/workflows/arch-guard-callable.yml@main
 on:
   workflow_call:
     inputs:
@@ -49,7 +49,7 @@ jobs:
       # 2. Check out the arch-guard engine from the governance repo
       - uses: actions/checkout@v4
         with:
-          repository: greg-skinner_data/arch-guard     # ← update to your org/repo
+          repository: gs-dbx/arch-guard     # ← update to your org/repo
           ref: ${{ inputs.arch_guard_ref }}
           path: .arch-guard
           token: ${{ secrets.ARCH_GUARD_TOKEN || github.token }}
