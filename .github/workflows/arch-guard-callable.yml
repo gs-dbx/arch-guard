@@ -19,31 +19,51 @@ on:
         description: Branch/tag of the arch-guard repo to use (pin to a release in prod)
         type: string
         default: main
+
+      # Runner — accepts a simple string label OR a JSON object for group+labels:
+      #   Simple:     runner: "ubuntu-latest"
+      #   Group+label: runner: '{"group":"emu-runners","labels":["linux"]}'
       runner:
-        description: >
-          Runner label or group for this job.
-          Default is GitHub-hosted ubuntu-latest.
-          Override with your org's protected runner label for FM review to work
-          through workspace IP ACLs (e.g. "self-hosted" or a runner group name).
+        description: Runner label (string) or group+labels JSON object
         type: string
         default: ubuntu-latest
+
+      # GitHub environment name — required for OIDC subject precision.
+      # The Databricks SP federated credential must match:
+      #   repo:<org>/<repo>:environment:<environment>
+      environment:
+        description: GitHub environment name (used to scope the OIDC subject claim)
+        type: string
+        default: ""
+
+      # Non-sensitive Databricks config — pass from vars, not secrets
+      databricks_host:
+        description: Databricks workspace URL (e.g. https://adb-xxx.azuredatabricks.net)
+        type: string
+        default: ""
+      databricks_client_id:
+        description: Service principal application ID
+        type: string
+        default: ""
+
       databricks_auth_type:
         description: >
-          Databricks auth method. Options:
+          Databricks auth method:
             github-oidc        — GitHub OIDC WIF, no stored secrets (recommended)
-            client-credentials — M2M OAuth, needs CLIENT_ID + CLIENT_SECRET secrets
-          Leave blank to skip FM review and UC grounding.
+            client-credentials — M2M OAuth, needs DATABRICKS_CLIENT_SECRET secret
         type: string
         default: github-oidc
+
+      fm_endpoint:
+        description: >
+          FM serving endpoint or AI Gateway model name
+          (e.g. system.ai.claude-opus-5 or databricks-meta-llama-3-3-70b-instruct)
+        type: string
+        default: ""
+
     secrets:
-      DATABRICKS_HOST:
-        required: false
-      DATABRICKS_CLIENT_ID:
-        required: false
       DATABRICKS_CLIENT_SECRET:
         required: false        # only needed for client-credentials auth type
-      FM_SERVING_ENDPOINT:
-        required: false
       ARCH_GUARD_TOKEN:
         required: false        # only needed if arch-guard repo is in a different org
 
@@ -56,15 +76,14 @@ permissions:
 
 jobs:
   arch-guard:
-    runs-on: ${{ inputs.runner }}
+    runs-on: ${{ fromJSON(inputs.runner) }}
+    environment: ${{ inputs.environment }}
 
     steps:
-      # 1. Check out the calling pipeline repo
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 2. Check out the arch-guard engine
       - uses: actions/checkout@v4
         with:
           repository: gs-dbx/arch-guard
@@ -90,14 +109,14 @@ jobs:
       - name: Run arch-guard
         id: arch_guard
         env:
-          # Databricks auth — SDK reads these automatically.
-          # github-oidc:        only DATABRICKS_HOST + DATABRICKS_CLIENT_ID needed.
-          # client-credentials: also needs DATABRICKS_CLIENT_SECRET.
-          DATABRICKS_AUTH_TYPE: ${{ inputs.databricks_auth_type }}
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          # Set DATABRICKS_AUTH_TYPE only for github-oidc.
+          # For M2M (client-credentials), leave it unset — the SDK auto-detects
+          # oauth-m2m from the presence of CLIENT_ID + CLIENT_SECRET.
+          DATABRICKS_AUTH_TYPE: ${{ inputs.databricks_auth_type == 'github-oidc' && 'github-oidc' || '' }}
+          DATABRICKS_HOST: ${{ inputs.databricks_host }}
+          DATABRICKS_CLIENT_ID: ${{ inputs.databricks_client_id }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
-          FM_ENDPOINT: ${{ secrets.FM_SERVING_ENDPOINT }}
+          FM_ENDPOINT: ${{ inputs.fm_endpoint }}
         run: |
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
           HEAD_SHA="${{ github.event.pull_request.head.sha }}"
@@ -122,7 +141,7 @@ jobs:
 
       - name: Upload SARIF (inline PR annotations)
         if: always()
-        continue-on-error: true   # requires GitHub Advanced Security on private repos
+        continue-on-error: true
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: findings.sarif
