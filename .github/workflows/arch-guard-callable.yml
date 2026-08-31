@@ -26,6 +26,8 @@ on:
         required: false
       DATABRICKS_CLIENT_SECRET:
         required: false
+      FM_SERVING_ENDPOINT:
+        required: false
       # Token to check out the arch-guard repo if it is in a different org.
       # Leave unset if both repos are in the same org (GITHUB_TOKEN is used).
       ARCH_GUARD_TOKEN:
@@ -71,6 +73,7 @@ jobs:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          FM_ENDPOINT: ${{ secrets.FM_SERVING_ENDPOINT }}
         run: |
           # Resolve SHAs — use PR context when available, fall back to git for
           # workflow_dispatch runs or any case where the PR event isn't propagated.
