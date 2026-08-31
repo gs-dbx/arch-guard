@@ -23,6 +23,8 @@ from arch_guard.contract import load_and_validate
 from arch_guard.findings import Finding, to_sarif, write_summary
 from arch_guard.fm_review import fm_review
 from arch_guard.parsers.dlt_python import parse_dlt_file
+from arch_guard.parsers.spark_python import parse_spark_file
+from arch_guard.parsers.sql_files import parse_sql_file
 from arch_guard.waivers import apply_waivers, load_waivers
 import arch_guard.rules  # noqa: F401 — triggers all @register decorators
 from arch_guard.rules._base import FileContext, rules_for
@@ -71,10 +73,23 @@ def check_file(file, contract):
             return [Finding("parse.syntax_error",
                             "Python syntax error: {}".format(e),
                             file, e.lineno or 1, "error")]
-        file_type = "dlt_python" if tables else "raw_python"
-        ctx = FileContext(file=file, contract=contract, tables=tables)
+        if tables:
+            ctx = FileContext(file=file, contract=contract, tables=tables)
+            file_type = "dlt_python"
+        else:
+            spark_ops = parse_spark_file(file)
+            ctx = FileContext(file=file, contract=contract, spark_ops=spark_ops)
+            file_type = "raw_python"
         findings = []
         for rule in rules_for(file_type):
+            findings += rule.check(ctx)
+        return findings
+
+    if p.suffix in (".sql",):
+        spark_ops = parse_sql_file(file)
+        ctx = FileContext(file=file, contract=contract, spark_ops=spark_ops)
+        findings = []
+        for rule in rules_for("sql"):
             findings += rule.check(ctx)
         return findings
 

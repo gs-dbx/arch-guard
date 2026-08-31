@@ -19,41 +19,55 @@ on:
         description: Branch/tag of the arch-guard repo to use (pin to a release in prod)
         type: string
         default: main
+      runner:
+        description: >
+          Runner label or group for this job.
+          Default is GitHub-hosted ubuntu-latest.
+          Override with your org's protected runner label for FM review to work
+          through workspace IP ACLs (e.g. "self-hosted" or a runner group name).
+        type: string
+        default: ubuntu-latest
+      databricks_auth_type:
+        description: >
+          Databricks auth method. Options:
+            github-oidc        — GitHub OIDC WIF, no stored secrets (recommended)
+            client-credentials — M2M OAuth, needs CLIENT_ID + CLIENT_SECRET secrets
+          Leave blank to skip FM review and UC grounding.
+        type: string
+        default: github-oidc
     secrets:
       DATABRICKS_HOST:
         required: false
-      DATABRICKS_TOKEN:
-        required: false        # PAT — simplest auth; takes precedence if set
       DATABRICKS_CLIENT_ID:
-        required: false        # M2M OAuth — used when DATABRICKS_TOKEN is absent
-      DATABRICKS_CLIENT_SECRET:
         required: false
+      DATABRICKS_CLIENT_SECRET:
+        required: false        # only needed for client-credentials auth type
       FM_SERVING_ENDPOINT:
         required: false
-      # Token to check out the arch-guard repo if it is in a different org.
-      # Leave unset if both repos are in the same org (GITHUB_TOKEN is used).
       ARCH_GUARD_TOKEN:
-        required: false
+        required: false        # only needed if arch-guard repo is in a different org
+
+permissions:
+  contents: read
+  pull-requests: write        # post PR review comments
+  security-events: write      # upload SARIF → inline annotations
+  checks: write               # neutral check (flip to required in v3)
+  id-token: write             # GitHub OIDC — required for github-oidc auth type
 
 jobs:
   arch-guard:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write        # post PR review comments
-      security-events: write      # upload SARIF → inline annotations
-      checks: write               # neutral check (flip to required in v3)
+    runs-on: ${{ inputs.runner }}
 
     steps:
-      # 1. Check out the calling pipeline repo (default — GITHUB_REPOSITORY is the caller)
+      # 1. Check out the calling pipeline repo
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0          # need base..head diff
+          fetch-depth: 0
 
-      # 2. Check out the arch-guard engine from the governance repo
+      # 2. Check out the arch-guard engine
       - uses: actions/checkout@v4
         with:
-          repository: gs-dbx/arch-guard     # ← update to your org/repo
+          repository: gs-dbx/arch-guard
           ref: ${{ inputs.arch_guard_ref }}
           path: .arch-guard
           token: ${{ secrets.ARCH_GUARD_TOKEN || github.token }}
@@ -67,67 +81,24 @@ jobs:
       - name: Install arch-guard
         run: pip install -r .arch-guard/requirements.txt
 
-      - uses: databricks/setup-cli@main
-
-      - name: Obtain Databricks token
-        env:
-          DATABRICKS_TOKEN_PAT: ${{ secrets.DATABRICKS_TOKEN }}
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
-          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+      - name: Show runner egress IP
         run: |
-          # Prefer a direct PAT if one is set (useful for local testing / fallback).
-          if [ -n "$DATABRICKS_TOKEN_PAT" ]; then
-            echo "DATABRICKS_TOKEN=$DATABRICKS_TOKEN_PAT" >> $GITHUB_ENV
-            echo "arch-guard: using DATABRICKS_TOKEN (PAT)."
-            exit 0
-          fi
-
-          # Standard path: M2M OAuth with service principal credentials.
-          if [ -z "$DATABRICKS_HOST" ] || [ -z "$DATABRICKS_CLIENT_ID" ] || [ -z "$DATABRICKS_CLIENT_SECRET" ]; then
-            echo "arch-guard: Databricks credentials not configured."
-            echo "arch-guard: UC grounding and FM review will be skipped."
-            echo "arch-guard: to enable, set DATABRICKS_HOST, DATABRICKS_CLIENT_ID, and DATABRICKS_CLIENT_SECRET secrets."
-            exit 0
-          fi
-
-          echo "arch-guard: checking connectivity to $DATABRICKS_HOST ..."
-          http_code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "$DATABRICKS_HOST" 2>/dev/null || echo "000")
-          echo "arch-guard: workspace response: $http_code"
-          if [ "$http_code" = "000" ]; then
-            echo "arch-guard: workspace is not reachable from this runner."
-            echo "arch-guard: if the workspace has an IP access list, use a self-hosted runner or add GitHub runner IP ranges."
-            echo "arch-guard: UC grounding and FM review will be skipped."
-            exit 0
-          fi
-
-          echo "arch-guard: requesting token for service principal ${DATABRICKS_CLIENT_ID}..."
-          token=$(curl -s -X POST \
-            -u "${DATABRICKS_CLIENT_ID}:${DATABRICKS_CLIENT_SECRET}" \
-            -d "grant_type=client_credentials&scope=all-apis" \
-            "${DATABRICKS_HOST}/oidc/v1/token" \
-            | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null \
-            || echo "")
-
-          if [ -n "$token" ]; then
-            echo "DATABRICKS_TOKEN=$token" >> $GITHUB_ENV
-            echo "arch-guard: service principal token obtained successfully."
-          else
-            echo "arch-guard: token exchange failed — UC grounding and FM review will be skipped."
-            echo "arch-guard: verify the service principal has 'Can Query' on the FM serving endpoint."
-            echo "arch-guard: verify DATABRICKS_HOST is correct (e.g. https://adb-xxx.azuredatabricks.net)."
-          fi
+          egress=$(curl -fsS --max-time 5 https://ifconfig.me 2>/dev/null || echo "unknown")
+          echo "arch-guard: runner egress IP: $egress"
+          echo "arch-guard: if FM review is blocked, add $egress/32 to the workspace IP ACL."
 
       - name: Run arch-guard
         id: arch_guard
         env:
+          # Databricks auth — SDK reads these automatically.
+          # github-oidc:        only DATABRICKS_HOST + DATABRICKS_CLIENT_ID needed.
+          # client-credentials: also needs DATABRICKS_CLIENT_SECRET.
+          DATABRICKS_AUTH_TYPE: ${{ inputs.databricks_auth_type }}
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
           FM_ENDPOINT: ${{ secrets.FM_SERVING_ENDPOINT }}
         run: |
-          # Resolve SHAs — use PR context when available, fall back to git for
-          # workflow_dispatch runs or any case where the PR event isn't propagated.
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
           HEAD_SHA="${{ github.event.pull_request.head.sha }}"
           if [ -z "$BASE_SHA" ] || [ -z "$HEAD_SHA" ]; then
@@ -136,15 +107,6 @@ jobs:
             BASE_SHA=$(git rev-parse HEAD~1 2>/dev/null || git hash-object -t tree /dev/null)
           fi
           echo "Checking diff: $BASE_SHA..$HEAD_SHA"
-
-          # Diagnostic: check AI Gateway is reachable from this runner
-          if [ -n "$DATABRICKS_TOKEN" ] && [ -n "$FM_ENDPOINT" ]; then
-            ag_status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 \
-              -H "Authorization: Bearer $DATABRICKS_TOKEN" \
-              "${DATABRICKS_HOST}/ai-gateway/mlflow/v1/chat/completions" \
-              2>/dev/null || echo "000")
-            echo "arch-guard [fm]: AI Gateway probe: $ag_status"
-          fi
 
           ADVISORY_FLAG=""
           if [ "${{ inputs.advisory }}" = "true" ]; then

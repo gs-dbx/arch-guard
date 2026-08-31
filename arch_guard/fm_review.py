@@ -5,12 +5,16 @@ Activated only when FM_ENDPOINT is set in the environment. Degrades silently
 (logs, returns []) on any failure — FM findings are advisory, never the reason
 a check crashes or hard-blocks.
 
+Auth is handled entirely by the Databricks SDK via DATABRICKS_AUTH_TYPE:
+  - github-oidc        : GitHub OIDC WIF — no stored secrets (recommended)
+  - client-credentials : M2M OAuth with DATABRICKS_CLIENT_ID + CLIENT_SECRET
+  - pat                : personal access token via DATABRICKS_TOKEN
+
 FM findings are capped at severity "warning". The LLM never owns error-level
 findings; deterministic rules do.
 """
 import json
 import os
-import urllib.request
 from pathlib import Path
 
 import jsonschema
@@ -48,16 +52,6 @@ _FM_OUTPUT_SCHEMA = {
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "review_system.txt"
 
 
-def _get_token():
-    """Read DATABRICKS_TOKEN from the environment.
-
-    The token is obtained by the workflow's 'Obtain Databricks token' step
-    before the Python process starts. Auth is the workflow's responsibility;
-    this function just reads the result.
-    """
-    return os.environ.get("DATABRICKS_TOKEN")
-
-
 def _build_system_prompt(contract):
     template = _PROMPT_PATH.read_text()
     # Inline the relevant contract sections so the model knows the actual rules
@@ -84,51 +78,36 @@ def _build_user_message(diff_text, existing_findings):
 
 
 def _call_fm_api(system_prompt, user_message):
-    host = os.environ.get("DATABRICKS_HOST", "").rstrip("/")
-    model = os.environ.get("FM_ENDPOINT", "")   # e.g. system.ai.claude-opus-5
-    if not host or not model:
+    """Call the FM endpoint via the Databricks SDK.
+
+    Auth is fully delegated to the SDK — it reads DATABRICKS_AUTH_TYPE,
+    DATABRICKS_HOST, and whichever credentials that auth type requires.
+    No token management here.
+    """
+    model = os.environ.get("FM_ENDPOINT", "")
+    if not model:
         return None
 
-    token = _get_token()
-    if not token:
-        print("arch-guard [fm]: no auth token available — skipping FM review.")
-        return None
-
-    # Foundation Model APIs are served via Unity AI Gateway
-    url = "{}/ai-gateway/mlflow/v1/chat/completions".format(host)
-    payload = json.dumps({
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user",   "content": user_message},
-        ],
-        "temperature": 0,
-        "max_tokens": 2048,
-    }).encode()
-
-    req = urllib.request.Request(
-        url,
-        data=payload,
-        headers={
-            "Authorization": "Bearer {}".format(token),
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            return json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        body = e.read().decode()[:500]
-        print("arch-guard [fm]: API call failed — {} {} — {}".format(e.code, e.reason, body))
-        return None
+        from databricks_openai import DatabricksOpenAI
+        client = DatabricksOpenAI()
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": user_message},
+            ],
+            temperature=0,
+            max_tokens=2048,
+        )
+        # Normalise to the dict shape the rest of this module expects
+        return {"choices": [{"message": {"content": response.choices[0].message.content}}]}
     except Exception as e:
         print("arch-guard [fm]: API call failed — {}".format(e))
         return None
 
 
 def _extract_json_from_response(api_response):
-    """Pull the assistant message text out of the API response envelope."""
     try:
         return api_response["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):

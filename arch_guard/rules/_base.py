@@ -25,12 +25,14 @@ class FileContext(object):
         contract    Loaded arch-contract.yaml as a Python dict.
         tables      List of TableDef objects (dlt_python files only; [] otherwise).
         raw_config  Parsed YAML dict (dab_yaml files only; {} otherwise).
+        spark_ops   List of SparkOperation objects (raw_python files only; [] otherwise).
     """
-    def __init__(self, file, contract, tables=None, raw_config=None):
+    def __init__(self, file, contract, tables=None, raw_config=None, spark_ops=None):
         self.file = file
         self.contract = contract
         self.tables = tables or []
         self.raw_config = raw_config or {}
+        self.spark_ops = spark_ops or []
 
 
 class Rule(object):
@@ -43,9 +45,10 @@ class Rule(object):
         "dlt_python"  — .py files that contain @dlt.table / @dlt.view decorators.
                         ctx.tables is populated with parsed TableDef objects.
         "raw_python"  — .py files with no DLT decorators (Spark jobs, notebooks).
-                        ctx.tables is empty; operate on ctx.file directly if needed.
+                        ctx.spark_ops is populated with SparkOperation objects.
         "dab_yaml"    — databricks.yml / databricks.yaml files.
                         ctx.raw_config is the parsed YAML dict.
+        "sql"         — .sql files. ctx.spark_ops contains extracted table refs.
     """
     rule_id = None      # type: str  dotted id, e.g. "catalog.unsanctioned"
     applies_to = []     # type: list[str]
