@@ -67,6 +67,22 @@ jobs:
 
       - uses: databricks/setup-cli@main
 
+      - name: Obtain Databricks token
+        if: ${{ secrets.DATABRICKS_CLIENT_ID != '' }}
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        run: |
+          token=$(databricks auth token --host "$DATABRICKS_HOST" 2>/dev/null \
+            | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null || echo "")
+          if [ -n "$token" ]; then
+            echo "DATABRICKS_TOKEN=$token" >> $GITHUB_ENV
+            echo "Token obtained via Databricks CLI."
+          else
+            echo "Warning: could not obtain Databricks token — UC grounding and FM review will be skipped."
+          fi
+
       - name: Run arch-guard
         id: arch_guard
         env:

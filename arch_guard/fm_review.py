@@ -10,7 +10,6 @@ findings; deterministic rules do.
 """
 import json
 import os
-import subprocess
 import urllib.request
 from pathlib import Path
 
@@ -50,17 +49,13 @@ _PROMPT_PATH = Path(__file__).parent / "prompts" / "review_system.txt"
 
 
 def _get_token():
-    """Get a Databricks auth token from the CLI (already configured in the workflow)."""
-    token = os.environ.get("DATABRICKS_TOKEN")
-    if token:
-        return token
-    result = subprocess.run(
-        ["databricks", "auth", "token"],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-    )
-    if result.returncode == 0:
-        return result.stdout.decode().strip()
-    return None
+    """Read DATABRICKS_TOKEN from the environment.
+
+    The token is obtained by the workflow's 'Obtain Databricks token' step
+    before the Python process starts. Auth is the workflow's responsibility;
+    this function just reads the result.
+    """
+    return os.environ.get("DATABRICKS_TOKEN")
 
 
 def _build_system_prompt(contract):
