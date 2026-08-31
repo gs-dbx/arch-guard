@@ -64,7 +64,6 @@ jobs:
         run: pip install -r .arch-guard/requirements.txt
 
       - uses: databricks/setup-cli@main
-        if: ${{ secrets.DATABRICKS_HOST != '' }}   # skip if no Databricks creds (v1)
 
       - name: Run arch-guard
         id: arch_guard
