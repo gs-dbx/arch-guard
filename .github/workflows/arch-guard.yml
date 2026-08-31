@@ -1,0 +1,61 @@
+name: arch-guard
+
+on:
+  pull_request:
+    paths:
+      - "**/*.py"
+      - "**/*.sql"
+      - "**/databricks.yml"
+      - "**/databricks.yaml"
+      - "arch-contract.yaml"          # contract change → re-evaluate everything
+
+permissions:
+  contents: read
+  pull-requests: write                # post PR review comments
+  security-events: write             # upload SARIF for inline annotations
+  checks: write                      # neutral check (flip to required in v3)
+
+jobs:
+  arch-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0             # need full history for base..head diff
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - uses: databricks/setup-cli@main
+
+      # v1: advisory. The check always exits 0 so it never blocks the PR.
+      # v3: remove --advisory and make this check required in branch protection.
+      - name: Run arch-guard (advisory)
+        id: arch_guard
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          # v2 seam: FM_ENDPOINT activates the LLM reviewer when set.
+          FM_ENDPOINT: ${{ secrets.FM_SERVING_ENDPOINT }}
+        run: |
+          python -m arch_guard.check \
+            --contract arch-contract.yaml \
+            --diff-base "${{ github.event.pull_request.base.sha }}" \
+            --diff-head "${{ github.event.pull_request.head.sha }}" \
+            --sarif-out findings.sarif \
+            --summary-out "$GITHUB_STEP_SUMMARY" \
+            --advisory
+
+      # SARIF → inline PR annotations (requires security-events: write permission)
+      - name: Upload SARIF (inline PR annotations)
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: findings.sarif
+          category: arch-guard

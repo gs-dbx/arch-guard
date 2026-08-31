@@ -1,0 +1,93 @@
+name: arch-guard (reusable)
+
+# Called by pipeline repos via:
+#   uses: greg-skinner_data/arch-guard/.github/workflows/arch-guard-callable.yml@main
+on:
+  workflow_call:
+    inputs:
+      contract:
+        description: Path to arch-contract.yaml in the calling repo
+        type: string
+        default: arch-contract.yaml
+      advisory:
+        description: >
+          Advisory mode (true = always exit 0, v1 default).
+          Set to false in v3 when enforcement is enabled.
+        type: boolean
+        default: true
+      arch_guard_ref:
+        description: Branch/tag of the arch-guard repo to use (pin to a release in prod)
+        type: string
+        default: main
+    secrets:
+      DATABRICKS_HOST:
+        required: false
+      DATABRICKS_CLIENT_ID:
+        required: false
+      DATABRICKS_CLIENT_SECRET:
+        required: false
+      # Token to check out the arch-guard repo if it is in a different org.
+      # Leave unset if both repos are in the same org (GITHUB_TOKEN is used).
+      ARCH_GUARD_TOKEN:
+        required: false
+
+jobs:
+  arch-guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write        # post PR review comments
+      security-events: write      # upload SARIF → inline annotations
+      checks: write               # neutral check (flip to required in v3)
+
+    steps:
+      # 1. Check out the calling pipeline repo (default — GITHUB_REPOSITORY is the caller)
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # need base..head diff
+
+      # 2. Check out the arch-guard engine from the governance repo
+      - uses: actions/checkout@v4
+        with:
+          repository: greg-skinner_data/arch-guard     # ← update to your org/repo
+          ref: ${{ inputs.arch_guard_ref }}
+          path: .arch-guard
+          token: ${{ secrets.ARCH_GUARD_TOKEN || github.token }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: .arch-guard/requirements.txt
+
+      - name: Install arch-guard
+        run: pip install -r .arch-guard/requirements.txt
+
+      - uses: databricks/setup-cli@main
+        if: ${{ secrets.DATABRICKS_HOST != '' }}   # skip if no Databricks creds (v1)
+
+      - name: Run arch-guard
+        id: arch_guard
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+        run: |
+          ADVISORY_FLAG=""
+          if [ "${{ inputs.advisory }}" = "true" ]; then
+            ADVISORY_FLAG="--advisory"
+          fi
+          PYTHONPATH=.arch-guard python -m arch_guard.check \
+            --contract "${{ inputs.contract }}" \
+            --diff-base "${{ github.event.pull_request.base.sha }}" \
+            --diff-head "${{ github.event.pull_request.head.sha }}" \
+            --sarif-out findings.sarif \
+            --summary-out "$GITHUB_STEP_SUMMARY" \
+            $ADVISORY_FLAG
+
+      - name: Upload SARIF (inline PR annotations)
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: findings.sarif
+          category: arch-guard

@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "arch-contract.schema.json",
+  "title": "Databricks Architecture Contract",
+  "type": "object",
+  "required": ["version", "sanctioned_catalogs", "schemas", "tiering", "naming"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "sanctioned_catalogs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "env"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]+$" },
+          "env":  { "type": "string", "enum": ["dev", "staging", "prod"] }
+        }
+      }
+    },
+    "schemas": {
+      "type": "object",
+      "required": ["required", "tier_map"],
+      "additionalProperties": false,
+      "properties": {
+        "required": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "tier_map": {
+          "type": "object",
+          "additionalProperties": { "type": "string", "enum": ["bronze", "silver", "gold"] }
+        }
+      }
+    },
+    "external_sources": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "type"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "type": { "type": "string" }
+        }
+      }
+    },
+    "tiering": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["may_read_from", "may_write_to"],
+        "additionalProperties": false,
+        "properties": {
+          "may_read_from": { "type": "array", "items": { "type": "string" } },
+          "may_write_to":  { "type": "array", "items": { "type": "string" } },
+          "serving":       { "type": "boolean" }
+        }
+      }
+    },
+    "naming": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": ["pattern"],
+        "additionalProperties": false,
+        "properties": {
+          "pattern":  { "type": "string" },
+          "severity": {
+            "type": "string",
+            "enum": ["error", "warning", "note"],
+            "default": "warning"
+          }
+        }
+      }
+    },
+    "required_tags": {
+      "type": "object",
+      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+    },
+    "overrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mechanism":        { "type": "string", "enum": ["pr_label", "inline_pragma"] },
+        "label":            { "type": "string" },
+        "authorized_teams": { "type": "array", "items": { "type": "string" } },
+        "require_reason":   { "type": "boolean" }
+      }
+    }
+  }
+}

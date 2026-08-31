@@ -1,0 +1,75 @@
+# arch-contract.yaml — versioned source of truth for the customer's agreed architecture.
+# Every change is a reviewed PR. CI validates this file against arch-contract.schema.json
+# before running any rules.
+version: 1
+
+# Only these catalogs may be targeted by pipelines. Anything else = violation.
+sanctioned_catalogs:
+  - name: dev_analytics
+    env: dev
+  - name: staging_analytics
+    env: staging
+  - name: prod_analytics
+    env: prod
+
+# Required schemas per catalog and the medallion tier each maps to.
+schemas:
+  required: [bronze, silver, gold]
+  tier_map:
+    bronze: bronze
+    silver: silver
+    gold: gold
+
+# External sources that bronze pipelines are permitted to ingest from.
+# Any source not in this list read by a bronze pipeline = violation.
+external_sources:
+  - name: kafka_raw_events
+    type: kafka
+  - name: s3_landing
+    type: cloud_storage
+
+# Medallion tier rules — from a pipeline's perspective:
+#   may_read_from: which tiers this pipeline's inputs may come from
+#   may_write_to:  which tier this pipeline's output must land in
+# A bronze pipeline reads from external sources and writes to the bronze schema.
+# A silver pipeline reads from bronze and writes to silver. Etc.
+tiering:
+  bronze:
+    may_read_from: [external]
+    may_write_to: [bronze]
+  silver:
+    may_read_from: [bronze]
+    may_write_to: [silver]
+  gold:
+    may_read_from: [silver]
+    may_write_to: [gold]
+    serving: true
+
+# Naming conventions (anchored regex). severity drives behavior:
+#   error   → blocks in v3, annotates in v1
+#   warning → always advisory
+naming:
+  tables:
+    pattern: "^[a-z][a-z0-9_]+$"
+    severity: error
+  pipelines:
+    pattern: "^plp_(bronze|silver|gold)_[a-z0-9_]+$"
+    severity: error
+  jobs:
+    pattern: "^job_[a-z0-9_]+$"
+    severity: warning
+  bronze_table_prefix:
+    pattern: "^raw_"
+    severity: warning
+
+# Required governance metadata on assets. Missing tags = warning in v1.
+required_tags:
+  tables: [owner, cost_center]
+  pipelines: [owner]
+
+# Override policy (advisory in v1; active when enforcement = required in v3).
+overrides:
+  mechanism: pr_label
+  label: arch-override-approved
+  authorized_teams: [data-platform-admins]
+  require_reason: true
