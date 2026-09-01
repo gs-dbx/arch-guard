@@ -109,7 +109,14 @@ def _call_fm_api(system_prompt, user_message):
 
 def _extract_json_from_response(api_response):
     try:
-        return api_response["choices"][0]["message"]["content"]
+        content = api_response["choices"][0]["message"]["content"]
+        # SDK may return content as a list of blocks (Claude format) or a plain string
+        if isinstance(content, list):
+            return "".join(
+                block.get("text", "") if isinstance(block, dict) else str(block)
+                for block in content
+            )
+        return content
     except (KeyError, IndexError, TypeError):
         return None
 
