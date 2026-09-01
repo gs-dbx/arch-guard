@@ -52,9 +52,15 @@ def all_tracked_files():
 
 
 def get_diff_text(base, head):
-    """Get the full unified diff for FM review context."""
+    """Get the unified diff of pipeline-relevant files only for FM review.
+
+    Excludes docs, markdown, and other non-code files so the LLM receives
+    a focused diff rather than a wall of documentation noise.
+    """
+    pipeline_extensions = (".py", ".sql", ".yml", ".yaml")
     result = subprocess.run(
-        ["git", "diff", "{}..{}".format(base, head)],
+        ["git", "diff", "{}..{}".format(base, head), "--"]
+        + ["*{}".format(ext) for ext in pipeline_extensions],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     return result.stdout.decode() if result.returncode == 0 else ""
