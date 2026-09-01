@@ -20,11 +20,11 @@ on:
         type: string
         default: main
 
-      # Runner — accepts a simple string label OR a JSON object for group+labels:
-      #   Simple:     runner: "ubuntu-latest"
-      #   Group+label: runner: '{"group":"emu-runners","labels":["linux"]}'
+      # Runner label for this job.
+      # Use any label visible in your org's runner settings.
+      # For a runner group, assign a label to the group and pass that label here.
       runner:
-        description: Runner label (string) or group+labels JSON object
+        description: Runner label (e.g. "ubuntu-latest" or "self-hosted")
         type: string
         default: ubuntu-latest
 
@@ -76,7 +76,7 @@ permissions:
 
 jobs:
   arch-guard:
-    runs-on: ${{ fromJSON(inputs.runner) }}
+    runs-on: ${{ inputs.runner }}
     environment: ${{ inputs.environment }}
 
     steps:
