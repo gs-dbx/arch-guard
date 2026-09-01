@@ -1,17 +1,14 @@
-"""FM API reviewer — calls a Databricks Foundation Model endpoint and returns
-structured Finding objects for anti-patterns the deterministic rules cannot catch.
+"""FM API reviewer — holistic per-file review via Databricks Foundation Model API.
 
-Activated only when FM_ENDPOINT is set in the environment. Degrades silently
-(logs, returns []) on any failure — FM findings are advisory, never the reason
-a check crashes or hard-blocks.
+Reviews the COMPLETE CURRENT CONTENT of each changed pipeline file rather than
+the diff. This gives the LLM full context — surrounding functions, imports,
+decorator arguments — that a fragment-based diff review misses.
 
-Auth is handled entirely by the Databricks SDK via DATABRICKS_AUTH_TYPE:
-  - github-oidc        : GitHub OIDC WIF — no stored secrets (recommended)
-  - client-credentials : M2M OAuth with DATABRICKS_CLIENT_ID + CLIENT_SECRET
-  - pat                : personal access token via DATABRICKS_TOKEN
+One API call per file. Findings are tagged [LLM] in the message so they are
+visually distinct from linter findings in the job summary.
 
-FM findings are capped at severity "warning". The LLM never owns error-level
-findings; deterministic rules do.
+Activated only when FM_ENDPOINT is set. Degrades silently on any failure —
+FM findings are advisory (warning/note only), never the reason a check blocks.
 """
 import json
 import os
@@ -20,11 +17,6 @@ from pathlib import Path
 import jsonschema
 
 from arch_guard.findings import Finding
-
-# ---------------------------------------------------------------------------
-# Output schema — every FM response is validated against this before use.
-# A response that doesn't match is discarded, not passed as findings.
-# ---------------------------------------------------------------------------
 
 _FM_OUTPUT_SCHEMA = {
     "type": "object",
@@ -51,8 +43,11 @@ _FM_OUTPUT_SCHEMA = {
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "review_system.txt"
 
+_REVIEWABLE_EXTENSIONS = (".py",)
 
-def _build_system_prompt(contract, existing_findings):
+
+def _build_system_prompt(contract, file_findings):
+    """Build the system prompt for one file review."""
     template = _PROMPT_PATH.read_text()
 
     tiering = contract.get("tiering", {})
@@ -64,38 +59,32 @@ def _build_system_prompt(contract, existing_findings):
     contract_summary = "Sanctioned catalogs: {}. Medallion flow: {}.".format(
         catalogs, tiers_summary)
 
-    if existing_findings:
+    if file_findings:
         linter_lines = "\n".join(
-            "- [LINTER][{}] {} — {}:{}  {}".format(
-                f.severity.upper(), f.rule_id, f.file, f.line, f.message)
-            for f in existing_findings
+            "  [LINTER][{}] {} line {}: {}".format(
+                f.severity.upper(), f.rule_id, f.line, f.message)
+            for f in file_findings
         )
     else:
-        linter_lines = "No linter findings for this diff."
+        linter_lines = "  None."
 
     return (template
             .replace("{contract_summary}", contract_summary)
             .replace("{linter_findings}", linter_lines))
 
 
-def _build_user_message(diff_text):
+def _build_user_message(file_path, file_content):
     return (
-        "## Changed files (git diff)\n\n"
-        "```diff\n{}\n```\n\n"
-        "Review the diff and return your findings as JSON."
-    ).format(diff_text)
+        "## File: {}\n\n"
+        "```python\n{}\n```\n\n"
+        "Review this file and return your findings as JSON."
+    ).format(file_path, file_content)
 
 
 def _call_fm_api(system_prompt, user_message):
-    """Call the FM endpoint via the Databricks SDK serving_endpoints.query().
-
-    Uses the SDK directly — no databricks-openai package needed.
-    Auth is fully delegated to the SDK via DATABRICKS_AUTH_TYPE + credentials.
-    """
     model = os.environ.get("FM_ENDPOINT", "")
     if not model:
         return None
-
     try:
         from databricks.sdk import WorkspaceClient
         from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
@@ -110,37 +99,31 @@ def _call_fm_api(system_prompt, user_message):
             max_tokens=2048,
         )
         content = response.choices[0].message.content
+        if isinstance(content, list):
+            return {"choices": [{"message": {"content": "".join(
+                block.get("text", "") if isinstance(block, dict) else str(block)
+                for block in content
+            )}}]}
         return {"choices": [{"message": {"content": content}}]}
     except Exception as e:
         print("arch-guard [fm]: API call failed — {}".format(e))
         return None
 
 
-def _extract_json_from_response(api_response):
+def _extract_text(api_response):
     try:
-        content = api_response["choices"][0]["message"]["content"]
-        # SDK may return content as a list of blocks (Claude format) or a plain string
-        if isinstance(content, list):
-            return "".join(
-                block.get("text", "") if isinstance(block, dict) else str(block)
-                for block in content
-            )
-        return content
+        return api_response["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError):
         return None
 
 
 def _parse_and_validate(raw_text):
-    """Parse JSON from the model response, validate schema, return findings list."""
     if not raw_text:
         return []
-    # Strip markdown code fences if the model wrapped its output
     text = raw_text.strip()
     if text.startswith("```"):
-        lines = text.splitlines()
         text = "\n".join(
-            l for l in lines
-            if not l.startswith("```")
+            l for l in text.splitlines() if not l.startswith("```")
         ).strip()
     try:
         data = json.loads(text)
@@ -155,42 +138,66 @@ def _parse_and_validate(raw_text):
     return data.get("findings", [])
 
 
-def fm_review(diff_text, contract, existing_findings=None):
-    """Call the FM API and return Finding objects for anti-pattern findings.
+def fm_review(files, contract, det_findings=None):
+    """Holistic per-file FM review.
 
-    Returns an empty list on any error — FM findings are advisory only.
+    Args:
+        files:        list of repo-relative file paths that changed
+        contract:     loaded arch-contract.yaml dict
+        det_findings: Finding objects from the deterministic pass (context only)
+
+    Returns a list of Finding objects, severity capped at warning.
     """
     if not os.environ.get("FM_ENDPOINT"):
         return []
 
-    existing_findings = existing_findings or []
-    system_prompt = _build_system_prompt(contract, existing_findings)
-    user_message = _build_user_message(diff_text)
+    det_findings = det_findings or []
 
-    print("arch-guard [fm]: calling {} ...".format(os.environ.get("FM_ENDPOINT")))
-    api_response = _call_fm_api(system_prompt, user_message)
-    if not api_response:
-        return []
+    # Index linter findings by file so we can pass per-file context
+    findings_by_file = {}
+    for f in det_findings:
+        findings_by_file.setdefault(f.file, []).append(f)
 
-    raw_text = _extract_json_from_response(api_response)
-    raw_findings = _parse_and_validate(raw_text)
+    all_fm_findings = []
+    reviewable = [f for f in files
+                  if Path(f).suffix in _REVIEWABLE_EXTENSIONS and Path(f).exists()]
 
-    findings = []
-    for rf in raw_findings:
-        # Enforce severity cap — FM findings are never errors
-        sev = rf.get("severity", "warning")
-        if sev not in ("warning", "note"):
-            sev = "warning"
-        msg = rf["message"]
-        if rf.get("rationale"):
-            msg = "{} ({})".format(msg, rf["rationale"])
-        findings.append(Finding(
-            rule_id=rf["rule_id"],
-            message=msg,
-            file=rf["file"],
-            line=rf["line"],
-            severity=sev,
-        ))
+    print("arch-guard [fm]: reviewing {} file(s) holistically...".format(len(reviewable)))
 
-    print("arch-guard [fm]: {} finding(s) from FM review.".format(len(findings)))
-    return findings
+    for file_path in reviewable:
+        try:
+            content = Path(file_path).read_text()
+        except Exception as e:
+            print("arch-guard [fm]: could not read {} — {}".format(file_path, e))
+            continue
+
+        file_linter = findings_by_file.get(file_path, [])
+        system_prompt = _build_system_prompt(contract, file_linter)
+        user_message = _build_user_message(file_path, content)
+
+        print("arch-guard [fm]: reviewing {} ({} linter findings as context)...".format(
+            file_path, len(file_linter)))
+
+        api_response = _call_fm_api(system_prompt, user_message)
+        if not api_response:
+            continue
+
+        raw_findings = _parse_and_validate(_extract_text(api_response))
+
+        for rf in raw_findings:
+            sev = rf.get("severity", "warning")
+            if sev not in ("warning", "note"):
+                sev = "warning"
+            msg = rf["message"]
+            if rf.get("rationale"):
+                msg = "{} ({})".format(msg, rf["rationale"])
+            all_fm_findings.append(Finding(
+                rule_id=rf["rule_id"],
+                message=msg,
+                file=rf.get("file", file_path),
+                line=rf["line"],
+                severity=sev,
+            ))
+
+    print("arch-guard [fm]: {} finding(s) from FM review.".format(len(all_fm_findings)))
+    return all_fm_findings

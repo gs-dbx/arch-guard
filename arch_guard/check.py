@@ -51,19 +51,6 @@ def all_tracked_files():
             if f.endswith(_TRACKED_EXTENSIONS)]
 
 
-def get_diff_text(base, head):
-    """Get the unified diff of pipeline-relevant files only for FM review.
-
-    Excludes docs, markdown, and other non-code files so the LLM receives
-    a focused diff rather than a wall of documentation noise.
-    """
-    pipeline_extensions = (".py", ".sql", ".yml", ".yaml")
-    result = subprocess.run(
-        ["git", "diff", "{}..{}".format(base, head), "--"]
-        + ["*{}".format(ext) for ext in pipeline_extensions],
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-    )
-    return result.stdout.decode() if result.returncode == 0 else ""
 
 
 def check_file(file, contract):
@@ -148,9 +135,8 @@ def main():
     for f in files:
         det_findings += check_file(f, contract)
 
-    # FM reviewer (v2) — only runs when FM_ENDPOINT is set
-    diff_text = get_diff_text(args.diff_base, args.diff_head)
-    fm_findings = fm_review(diff_text, contract, det_findings)
+    # FM reviewer (v2) — holistic per-file review, only runs when FM_ENDPOINT is set
+    fm_findings = fm_review(files, contract, det_findings)
 
     all_findings = det_findings + fm_findings
 
