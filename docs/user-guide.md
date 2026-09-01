@@ -183,7 +183,7 @@ is a silver table that reads from `raw_orders`).
 
 ---
 
-### `dlt.anti_pattern.*` / `dlt.quality.*` (LLM findings)
+### `de.<category>.*` (LLM findings)
 **What it means:** The LLM reviewer flagged a best-practice issue.
 These are always **warnings** and are always advisory — they will never block your PR.
 

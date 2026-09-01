@@ -108,7 +108,10 @@ def main():
     parser.add_argument("--schema")
     parser.add_argument("--diff-base", required=True)
     parser.add_argument("--diff-head", required=True)
-    parser.add_argument("--sarif-out", required=True)
+    parser.add_argument(
+        "--sarif-out",
+        help="Optional SARIF output path. Omit to use the Markdown summary only.",
+    )
     parser.add_argument("--summary-out")
     parser.add_argument("--waivers", default=".arch-waivers.yaml")
     parser.add_argument("--advisory", action="store_true")
@@ -123,12 +126,21 @@ def main():
 
     files = changed_files(args.diff_base, args.diff_head)
 
-    if _CONTRACT_FILE in files:
+    contract_changed = _CONTRACT_FILE in files
+    if contract_changed:
         print("arch-guard: {} changed — re-evaluating all tracked files.".format(
             _CONTRACT_FILE))
         files = all_tracked_files()
     else:
         files = [f for f in files if f != _CONTRACT_FILE]
+
+    reviewed_files = [
+        f for f in files
+        if Path(f).suffix in (".py", ".sql") or
+        Path(f).name in ("databricks.yml", "databricks.yaml")
+    ]
+    if contract_changed:
+        reviewed_files.insert(0, _CONTRACT_FILE)
 
     # Deterministic rules
     det_findings = []
@@ -145,12 +157,14 @@ def main():
     active_findings, waived = apply_waivers(all_findings, waivers)
 
     # Output
-    Path(args.sarif_out).write_text(
-        json.dumps(to_sarif(active_findings), indent=2))
+    if args.sarif_out:
+        Path(args.sarif_out).write_text(
+            json.dumps(to_sarif(active_findings), indent=2))
     if args.summary_out:
         with open(args.summary_out, "a") as fh:
             write_summary(active_findings, fh,
-                          advisory=args.advisory, waived=waived)
+                          advisory=args.advisory, waived=waived,
+                          checked_files=reviewed_files)
 
     errors = [f for f in active_findings if f.severity == "error"]
     print("arch-guard: {} active finding(s) ({} errors) · {} waived.".format(

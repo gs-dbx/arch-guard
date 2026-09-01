@@ -12,7 +12,6 @@ on:
 permissions:
   contents: read
   pull-requests: write                # post PR review comments
-  security-events: write             # upload SARIF for inline annotations
   checks: write                      # neutral check (flip to required in v3)
 
 jobs:
@@ -48,14 +47,5 @@ jobs:
             --contract arch-contract.yaml \
             --diff-base "${{ github.event.pull_request.base.sha }}" \
             --diff-head "${{ github.event.pull_request.head.sha }}" \
-            --sarif-out findings.sarif \
             --summary-out "$GITHUB_STEP_SUMMARY" \
             --advisory
-
-      # SARIF → inline PR annotations (requires security-events: write permission)
-      - name: Upload SARIF (inline PR annotations)
-        if: always()
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: findings.sarif
-          category: arch-guard

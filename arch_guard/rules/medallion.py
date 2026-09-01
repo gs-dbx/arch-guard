@@ -4,13 +4,32 @@ from arch_guard.findings import Finding
 from arch_guard.rules._base import FileContext, Rule, register
 
 
-def _infer_source_tier(source_ref, all_tables):
+def _infer_source_tier(source_ref, all_tables, contract):
     for t in all_tables:
         if t.logical_name == source_ref.table_ref:
-            return t.inferred_tier
+            return _infer_output_tier(t, contract)
     for tier in ("bronze_", "silver_", "gold_"):
         if source_ref.table_ref.startswith(tier):
             return tier.rstrip("_")
+    return None
+
+
+def _infer_output_tier(table, contract):
+    if table.inferred_tier is not None:
+        return table.inferred_tier
+    catalog = table.decorator_catalog or ""
+    convention = contract.get("catalog_convention", {})
+    layers = convention.get("domain_layers", {})
+    if catalog.endswith("_" + layers.get("bronze_suffix", "stage")):
+        return "bronze"
+    if catalog.endswith("_" + layers.get("silver_suffix", "cleansed")):
+        return "silver"
+    prefix = convention.get("prefix")
+    gold_names = convention.get("gold_catalogs", [])
+    if prefix and any(catalog == "{}_{}_{}".format(prefix, env, target)
+                      for env in convention.get("environments", [])
+                      for target in gold_names):
+        return "gold"
     return None
 
 
@@ -24,11 +43,11 @@ class MedallionFlowRule(Rule):
         # type: (FileContext) -> list
         findings = []
         for t in ctx.tables:
-            output_tier = t.inferred_tier
+            output_tier = _infer_output_tier(t, ctx.contract)
             if output_tier is None:
                 continue
             for src in t.sources:
-                src_tier = _infer_source_tier(src, ctx.tables)
+                src_tier = _infer_source_tier(src, ctx.tables, ctx.contract)
                 if src_tier is None:
                     continue
                 if not tier_read_allowed(output_tier, src_tier, ctx.contract):

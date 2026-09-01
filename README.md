@@ -7,11 +7,11 @@ arch-guard is a pull-request governance engine for Databricks data pipelines. It
 arch-guard has two review tiers:
 
 1. The deterministic tier parses supported files and runs registered Python rules. These findings are reproducible, can have `error`, `warning`, or `note` severity, and are the only findings that can block a PR when enforcement is enabled.
-2. The LLM tier sends the complete Git diff, a compact contract summary, and the existing linter findings to a Databricks Foundation Model serving endpoint. It looks for judgment-based DLT anti-patterns, emits only `warning` or `note` findings, and fails open if the endpoint is absent or unavailable.
+2. The LLM tier sends each changed Databricks asset's complete current content, a compact contract summary, and existing linter findings to a Databricks Foundation Model serving endpoint. It reviews SDP/DLT, Spark Python, SQL, and Databricks job/pipeline YAML for judgment-based engineering concerns, emits only `warning` or `note` findings, and fails open if unavailable.
 
 The deployment uses two repositories. The central `gs-dbx/arch-guard` repository owns the checker, parsers, rules, prompt, schema, and reusable workflow. Each pipeline repository owns its pipeline code, `arch-contract.yaml`, optional `.arch-waivers.yaml`, and a small caller workflow. The pipeline repository's contract is the source of truth for its sanctioned catalogs, tier graph, and naming policy; changing it is a reviewed architecture change, not a central-engine deployment.
 
-Some contract fields are forward-looking configuration. The current deterministic engine consumes `sanctioned_catalogs`, `tiering.*.may_read_from`, and `naming`. `schemas`, `external_sources`, `required_tags`, `tiering.*.may_write_to`, and `overrides` are validated and documented by the contract but are not yet enforced by a registered deterministic rule.
+The deterministic engine consumes `sanctioned_catalogs`, `catalog_convention`, `datasets`, `tiering.*.may_read_from`, and `naming`. Dataset policy validates approved dataset schemas, `dataset_name` identity tags, and domain-specific catalog placement for SDP/DLT assets. `schemas`, `external_sources`, general `required_tags`, `tiering.*.may_write_to`, and `overrides` remain forward-looking configuration.
 
 ## End-to-end flow
 
@@ -23,7 +23,7 @@ Some contract fields are forward-looking configuration. The current deterministi
 6. Python, SQL, and Databricks Asset Bundle files are parsed into `FileContext` objects and dispatched to registered rules by file type.
 7. If `FM_ENDPOINT` is set, the entire unified diff is reviewed by the FM endpoint. Any API, response-format, or schema error is logged and produces no FM findings.
 8. `.arch-waivers.yaml` is loaded. A non-expired entry suppresses a finding only when `rule_id` and `file` match, plus `line` when the waiver specifies one.
-9. Active findings are written as SARIF and as a Markdown GitHub job summary. The SARIF upload creates code-scanning annotations where GitHub supports them.
+9. Active findings are written to the Markdown GitHub job summary. Optional SARIF output and code-scanning annotations are available when the caller sets `sarif: true`.
 10. Advisory mode always exits 0. Enforcing mode exits 1 only when an active deterministic error remains; warnings and notes do not block.
 
 ## What is checked
@@ -45,10 +45,11 @@ Rule behavior is intentionally conservative. Dynamic Python names and non-three-
 - `naming.pipelines` validates the DAB pipeline display `name`, or resource key when no name is set, against `naming.pipelines.pattern`.
 - `naming.jobs` validates the DAB job display `name`, or resource key, against `naming.jobs.pattern`.
 - `medallion.illegal_read` is an error. It reports an inferred DLT source tier that is not in the output tier's `may_read_from` list.
+- `governance.dataset` checks that SDP/DLT schema names are approved datasets, `dataset_name` matches the schema, and domain-layer catalogs encode the dataset's owning domain.
 - `parse.syntax_error` is an error returned when a DLT Python file cannot be parsed. Non-DLT Python syntax errors currently yield no Spark operations.
 - `dab.parse_error` is an error returned when `databricks.yml` or `databricks.yaml` is invalid YAML.
 
-FM rule IDs have the validated form `dlt.<category>.<specific>`, where category is `quality`, `lineage`, `pattern`, or `ops`. Typical results include `dlt.quality.no_expect`, `dlt.lineage.spark_read`, and `dlt.pattern.missing_comment`; the exact ID is selected by the reviewer for the issue it observes.
+FM rule IDs have the validated form `de.<category>.<specific>`, where category is `quality`, `lineage`, `pattern`, `ops`, `reliability`, `performance`, `testing`, or `governance`. Examples include `de.quality.no_expect`, `de.lineage.spark_read`, and `de.reliability.non_idempotent_write`.
 
 ## Finding sources and severity
 
@@ -190,7 +191,7 @@ The legacy `tests/test_rules.py` imports function names that predate the class-b
 
 ## Tuning the LLM reviewer
 
-Edit `arch_guard/prompts/review_system.txt` and review the change like rule code. The template defines the reviewer's role, exclusions, issue categories, severity ceiling, `[LLM]` tag, and exact JSON response shape.
+Edit `arch_guard/prompts/review_system.txt` and review the change like rule code. The template includes customer-neutral playbook lenses for both declarative pipelines and ordinary jobs. It explicitly leaves naming conventions and catalog/schema topology to the architecture contract; use `docs/customer-architecture-decisions.md` to resolve those choices before encoding them.
 
 `fm_review._build_system_prompt()` replaces two placeholders before the request:
 

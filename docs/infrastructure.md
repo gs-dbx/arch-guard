@@ -107,7 +107,7 @@ permissions:
   id-token: write
 ```
 
-`id-token: write` is required for OIDC and harmless but unused by the interim M2M path. SARIF upload can fail for repository/licensing configurations; the reusable workflow marks that upload `continue-on-error` so review output remains in the job summary.
+`id-token: write` is required for OIDC and harmless but unused by the interim M2M path. SARIF is disabled by default because code-scanning availability and token policy vary by organization. Set the reusable workflow input `sarif: true` only where code scanning is available; upload remains `continue-on-error`, and the job summary remains authoritative.
 
 ## 5. Authentication
 
@@ -263,7 +263,7 @@ arch-guard [fm]: response is not valid JSON — ...
 arch-guard [fm]: response failed schema validation — ...
 ```
 
-The FM tier then returns no findings by design. Inspect `review_system.txt`, endpoint truncation, `max_tokens`, code fences, required fields, the `dlt.<category>.<specific>` ID pattern, and allowed severities. Do not pass unvalidated model text into SARIF.
+The FM tier then returns no findings by design. Inspect `review_system.txt`, endpoint truncation, `max_tokens`, code fences, required fields, the `de.<category>.<specific>` ID pattern, and allowed severities. Do not pass unvalidated model text into SARIF.
 
 ### FM API failure does not fail the job
 
@@ -293,6 +293,6 @@ arch-guard: FATAL — contract validation failed: ...
 
 It exits 2 even in advisory mode. Validate required fields, allowed `env`/severity values, naming regex strings, and `additionalProperties: false` constraints against `arch-contract.schema.json`.
 
-### SARIF upload fails but the summary exists
+### Optional SARIF upload fails but the summary exists
 
-Private-repository code-scanning availability or token permissions can reject `github/codeql-action/upload-sarif`. The workflow deliberately uses `continue-on-error: true`. Verify `security-events: write` and GitHub code-scanning availability; use the job summary as the authoritative output until SARIF is enabled.
+Private-repository code-scanning availability or token permissions can reject `github/codeql-action/upload-sarif`. SARIF defaults off; when explicitly enabled, the upload uses `continue-on-error: true`. Verify `security-events: write` and GitHub code-scanning availability, while continuing to use the job summary as the authoritative output.

@@ -61,9 +61,10 @@ def to_sarif(findings):
 _SEV_ICON = {"error": ":red_circle:", "warning": ":yellow_circle:", "note": ":white_circle:"}
 
 
-def write_summary(findings, fh, advisory=True, waived=None):
-    # type: (list, object, bool, list) -> None
+def write_summary(findings, fh, advisory=True, waived=None, checked_files=None):
+    # type: (list, object, bool, list, list) -> None
     waived = waived or []
+    checked_files = checked_files or []
     posture = "advisory (non-blocking)" if advisory else "enforcing (blocking on errors)"
     errors = sum(1 for f in findings if f.severity == "error")
     warnings = sum(1 for f in findings if f.severity == "warning")
@@ -74,7 +75,12 @@ def write_summary(findings, fh, advisory=True, waived=None):
         errors, warnings, len(waived)))
 
     if not findings and not waived:
-        fh.write(":white_check_mark: No findings — all checked files conform to the contract.\n")
+        fh.write("### :white_check_mark: Architecture review passed\n\n")
+        fh.write("No active findings were produced by the applicable contract and engineering rules.\n\n")
+        if checked_files:
+            fh.write("**Reviewed {} file(s):**\n\n".format(len(checked_files)))
+            for path in sorted(checked_files):
+                fh.write("- `{}`\n".format(path))
         return
 
     if findings:

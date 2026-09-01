@@ -6,4 +6,5 @@ from arch_guard.rules import (  # noqa: F401
     medallion,
     dab_config,
     spark_jobs,
+    datasets,
 )

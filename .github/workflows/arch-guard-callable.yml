@@ -15,6 +15,10 @@ on:
           Set to false in v3 when enforcement is enabled.
         type: boolean
         default: true
+      sarif:
+        description: Upload SARIF to GitHub code scanning for inline annotations (opt-in)
+        type: boolean
+        default: false
       arch_guard_ref:
         description: Branch/tag of the arch-guard repo to use (pin to a release in prod)
         type: string
@@ -62,15 +66,20 @@ on:
         default: ""
 
     secrets:
+      DATABRICKS_HOST:
+        required: false        # backward-compatible alternative to databricks_host input
+      DATABRICKS_CLIENT_ID:
+        required: false        # backward-compatible alternative to databricks_client_id input
       DATABRICKS_CLIENT_SECRET:
         required: false        # only needed for client-credentials auth type
+      FM_SERVING_ENDPOINT:
+        required: false        # backward-compatible alternative to fm_endpoint input
       ARCH_GUARD_TOKEN:
         required: false        # only needed if arch-guard repo is in a different org
 
 permissions:
   contents: read
   pull-requests: write        # post PR review comments
-  security-events: write      # upload SARIF → inline annotations
   checks: write               # neutral check (flip to required in v3)
   id-token: write             # GitHub OIDC — required for github-oidc auth type
 
@@ -125,10 +134,10 @@ jobs:
           # For M2M (client-credentials), leave it unset — the SDK auto-detects
           # oauth-m2m from the presence of CLIENT_ID + CLIENT_SECRET.
           DATABRICKS_AUTH_TYPE: ${{ inputs.databricks_auth_type == 'github-oidc' && 'github-oidc' || '' }}
-          DATABRICKS_HOST: ${{ inputs.databricks_host }}
-          DATABRICKS_CLIENT_ID: ${{ inputs.databricks_client_id }}
+          DATABRICKS_HOST: ${{ inputs.databricks_host || secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ inputs.databricks_client_id || secrets.DATABRICKS_CLIENT_ID }}
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
-          FM_ENDPOINT: ${{ inputs.fm_endpoint }}
+          FM_ENDPOINT: ${{ inputs.fm_endpoint || secrets.FM_SERVING_ENDPOINT }}
         run: |
           BASE_SHA="${{ github.event.pull_request.base.sha }}"
           HEAD_SHA="${{ github.event.pull_request.head.sha }}"
@@ -143,17 +152,38 @@ jobs:
           if [ "${{ inputs.advisory }}" = "true" ]; then
             ADVISORY_FLAG="--advisory"
           fi
+          SARIF_FLAG=""
+          if [ "${{ inputs.sarif }}" = "true" ]; then
+            SARIF_FLAG="--sarif-out findings.sarif"
+          fi
           PYTHONPATH=.arch-guard $PYTHON -m arch_guard.check \
             --contract "${{ inputs.contract }}" \
             --diff-base "$BASE_SHA" \
             --diff-head "$HEAD_SHA" \
-            --sarif-out findings.sarif \
             --summary-out "$GITHUB_STEP_SUMMARY" \
+            $SARIF_FLAG \
             $ADVISORY_FLAG
 
+      - name: Stage optional SARIF
+        if: ${{ always() && inputs.sarif }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-guard-sarif
+          path: findings.sarif
+
+  upload-sarif:
+    if: ${{ always() && inputs.sarif }}
+    needs: arch-guard
+    runs-on: ${{ inputs.runner }}
+    continue-on-error: true
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: arch-guard-sarif
       - name: Upload SARIF (inline PR annotations)
-        if: always()
-        continue-on-error: true
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: findings.sarif

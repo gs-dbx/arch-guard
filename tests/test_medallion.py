@@ -104,6 +104,26 @@ class TestMedallionFlow(unittest.TestCase):
         """, contract=contract)
         self.assertEqual(len(findings), 1)
 
+    def test_catalog_suffix_infers_tier_for_dataset_schema(self):
+        contract = contract_with(catalog_convention={
+            "prefix": "csb",
+            "environments": ["dev", "test", "preprod", "prod"],
+            "domain_layers": {"bronze_suffix": "stage", "silver_suffix": "cleansed"},
+            "gold_catalogs": ["analytics", "apps"],
+        })
+        findings = self._check('''
+            import dlt
+            @dlt.table(name="raw_orders", schema="orders", catalog="csb_dev_sales_stage")
+            def raw_orders():
+                pass
+
+            @dlt.table(name="orders_report", schema="orders", catalog="csb_dev_analytics")
+            def orders_report():
+                return dlt.read("raw_orders")
+        ''', contract=contract)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("tier=gold", findings[0].message)
+
 
 if __name__ == "__main__":
     unittest.main()

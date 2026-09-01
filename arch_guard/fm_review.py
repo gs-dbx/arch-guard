@@ -1,4 +1,4 @@
-"""FM API reviewer — holistic per-file review via Databricks Foundation Model API.
+"""FM API reviewer — holistic per-file Databricks asset review.
 
 Reviews the COMPLETE CURRENT CONTENT of each changed pipeline file rather than
 the diff. This gives the LLM full context — surrounding functions, imports,
@@ -29,7 +29,7 @@ _FM_OUTPUT_SCHEMA = {
                 "required": ["rule_id", "severity", "file", "line", "message"],
                 "additionalProperties": False,
                 "properties": {
-                    "rule_id":   {"type": "string", "pattern": "^dlt\\.[a-z_]+\\.[a-z_]+$"},
+                    "rule_id":   {"type": "string", "pattern": "^de\\.(quality|lineage|pattern|ops|reliability|performance|testing|governance)\\.[a-z_]+$"},
                     "severity":  {"type": "string", "enum": ["warning", "note"]},
                     "file":      {"type": "string"},
                     "line":      {"type": "integer", "minimum": 1},
@@ -43,7 +43,18 @@ _FM_OUTPUT_SCHEMA = {
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "review_system.txt"
 
-_REVIEWABLE_EXTENSIONS = (".py",)
+_FENCE_LANGUAGE = {
+    ".py": "python",
+    ".sql": "sql",
+    ".yml": "yaml",
+    ".yaml": "yaml",
+}
+
+
+def _is_reviewable(file_path):
+    path = Path(file_path)
+    return (path.suffix in (".py", ".sql") or
+            path.name in ("databricks.yml", "databricks.yaml"))
 
 
 def _build_system_prompt(contract, file_findings):
@@ -55,9 +66,23 @@ def _build_system_prompt(contract, file_findings):
         "{} reads from {}".format(k, v.get("may_read_from", []))
         for k, v in tiering.items()
     )
-    catalogs = [c["name"] for c in contract.get("sanctioned_catalogs", [])]
-    contract_summary = "Sanctioned catalogs: {}. Medallion flow: {}.".format(
-        catalogs, tiers_summary)
+    catalog_entries = contract.get("sanctioned_catalogs", [])
+    catalogs = [c["name"] for c in catalog_entries]
+    environments = sorted(set(c.get("env") for c in catalog_entries if c.get("env")))
+    catalog_convention = contract.get("catalog_convention", {})
+    dataset_config = contract.get("datasets", {})
+    datasets = dataset_config.get("allowed", [])
+    dataset_summary = [
+        "{} (domain {})".format(d.get("name"), d.get("domain"))
+        for d in datasets
+    ]
+    dataset_tags = dataset_config.get("required_tags", [])
+    contract_summary = (
+        "Environments represented by sanctioned catalogs: {}. "
+        "Sanctioned catalogs: {}. Catalog convention: {}. "
+        "Approved datasets: {}. Required dataset tags: {}. Medallion flow: {}."
+    ).format(environments, catalogs, catalog_convention, dataset_summary,
+             dataset_tags, tiers_summary)
 
     if file_findings:
         linter_lines = "\n".join(
@@ -74,11 +99,12 @@ def _build_system_prompt(contract, file_findings):
 
 
 def _build_user_message(file_path, file_content):
+    language = _FENCE_LANGUAGE.get(Path(file_path).suffix, "text")
     return (
         "## File: {}\n\n"
-        "```python\n{}\n```\n\n"
+        "```{}\n{}\n```\n\n"
         "Review this file and return your findings as JSON."
-    ).format(file_path, file_content)
+    ).format(file_path, language, file_content)
 
 
 def _call_fm_api(system_prompt, user_message):
@@ -159,8 +185,7 @@ def fm_review(files, contract, det_findings=None):
         findings_by_file.setdefault(f.file, []).append(f)
 
     all_fm_findings = []
-    reviewable = [f for f in files
-                  if Path(f).suffix in _REVIEWABLE_EXTENSIONS and Path(f).exists()]
+    reviewable = [f for f in files if _is_reviewable(f) and Path(f).exists()]
 
     print("arch-guard [fm]: reviewing {} file(s) holistically...".format(len(reviewable)))
 

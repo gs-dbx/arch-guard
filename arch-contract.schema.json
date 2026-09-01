@@ -16,7 +16,7 @@
         "additionalProperties": false,
         "properties": {
           "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]+$" },
-          "env":  { "type": "string", "enum": ["dev", "staging", "prod"] }
+          "env":  { "type": "string", "enum": ["dev", "test", "preprod", "prod"] }
         }
       }
     },
@@ -41,6 +41,55 @@
         "properties": {
           "name": { "type": "string" },
           "type": { "type": "string" }
+        }
+      }
+    },
+    "catalog_convention": {
+      "type": "object",
+      "required": ["prefix", "environments", "domain_layers", "gold_catalogs"],
+      "additionalProperties": false,
+      "properties": {
+        "prefix": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "environments": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "enum": ["dev", "test", "preprod", "prod"] }
+        },
+        "domain_layers": {
+          "type": "object",
+          "required": ["bronze_suffix", "silver_suffix"],
+          "additionalProperties": false,
+          "properties": {
+            "bronze_suffix": { "type": "string" },
+            "silver_suffix": { "type": "string" }
+          }
+        },
+        "gold_catalogs": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "datasets": {
+      "type": "object",
+      "required": ["allowed", "required_tags"],
+      "additionalProperties": false,
+      "properties": {
+        "severity": { "type": "string", "enum": ["error", "warning", "note"], "default": "warning" },
+        "required_tags": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
+        "allowed": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "required": ["name", "domain"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+              "domain": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" }
+            }
+          }
         }
       }
     },

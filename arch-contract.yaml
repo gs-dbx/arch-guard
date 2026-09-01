@@ -7,10 +7,27 @@ version: 1
 sanctioned_catalogs:
   - name: dev_analytics
     env: dev
-  - name: staging_analytics
-    env: staging
+  - name: test_analytics
+    env: test
+  - name: preprod_analytics
+    env: preprod
   - name: prod_analytics
     env: prod
+
+catalog_convention:
+  prefix: csb
+  environments: [dev, test, preprod, prod]
+  domain_layers:
+    bronze_suffix: stage
+    silver_suffix: cleansed
+  gold_catalogs: [analytics, apps]
+
+datasets:
+  severity: warning
+  required_tags: [dataset_name]
+  allowed:
+    - name: events
+      domain: events
 
 # Required schemas per catalog and the medallion tier each maps to.
 schemas:

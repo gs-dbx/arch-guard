@@ -3,6 +3,7 @@ import re
 
 from arch_guard.findings import Finding
 from arch_guard.rules._base import FileContext, Rule, register
+from arch_guard.rules.medallion import _infer_output_tier
 
 
 @register
@@ -49,7 +50,7 @@ class NamingBronzePrefixRule(Rule):
         sev = rule_cfg.get("severity", "warning")
         findings = []
         for t in ctx.tables:
-            if t.inferred_tier == "bronze" and not pat.match(t.logical_name):
+            if _infer_output_tier(t, ctx.contract) == "bronze" and not pat.match(t.logical_name):
                 findings.append(Finding(
                     rule_id=self.rule_id,
                     message="Bronze table '{}' should start with prefix matching `{}`.".format(
