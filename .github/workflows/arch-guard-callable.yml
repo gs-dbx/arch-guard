@@ -101,7 +101,12 @@ jobs:
           echo "PATH=$(dirname $(which python3)):$PATH" >> $GITHUB_ENV
 
       - name: Install arch-guard
-        run: pip3 install -r .arch-guard/requirements.txt
+        run: |
+          # Try pip install — falls back gracefully if PyPI is unreachable
+          # (self-hosted runners on air-gapped networks may have deps pre-installed)
+          pip3 install -r .arch-guard/requirements.txt 2>/dev/null || \
+            python3 -c "import yaml, jsonschema; print('arch-guard: using pre-installed deps')" || \
+            (echo "arch-guard: required packages not available — install pyyaml jsonschema via your local Nexus mirror" && exit 1)
 
       - name: Show runner egress IP
         run: |
