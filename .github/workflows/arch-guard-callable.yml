@@ -102,11 +102,9 @@ jobs:
 
       - name: Install arch-guard
         run: |
-          # Try pip install — falls back gracefully if PyPI is unreachable
-          # (self-hosted runners on air-gapped networks may have deps pre-installed)
-          pip3 install -r .arch-guard/requirements.txt 2>/dev/null || \
-            python3 -c "import yaml, jsonschema; print('arch-guard: using pre-installed deps')" || \
-            (echo "arch-guard: required packages not available — install pyyaml jsonschema via your local Nexus mirror" && exit 1)
+          python3 -c "import yaml, jsonschema" 2>/dev/null && \
+            echo "arch-guard: system deps available, skipping pip install." || \
+            pip3 install -r .arch-guard/requirements.txt
 
       - name: Show runner egress IP
         run: |
