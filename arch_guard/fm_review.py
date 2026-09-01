@@ -52,29 +52,38 @@ _FM_OUTPUT_SCHEMA = {
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "review_system.txt"
 
 
-def _build_system_prompt(contract):
+def _build_system_prompt(contract, existing_findings):
     template = _PROMPT_PATH.read_text()
-    # Inline the relevant contract sections so the model knows the actual rules
+
     tiering = contract.get("tiering", {})
     tiers_summary = "; ".join(
         "{} reads from {}".format(k, v.get("may_read_from", []))
         for k, v in tiering.items()
     )
     catalogs = [c["name"] for c in contract.get("sanctioned_catalogs", [])]
-    summary = "Sanctioned catalogs: {}. Medallion flow: {}.".format(
+    contract_summary = "Sanctioned catalogs: {}. Medallion flow: {}.".format(
         catalogs, tiers_summary)
-    return template.replace("{contract_summary}", summary)
 
-
-def _build_user_message(diff_text, existing_findings):
-    parts = ["## Changed files (git diff)\n\n```diff\n{}\n```".format(diff_text)]
     if existing_findings:
-        parts.append("## Deterministic findings already raised (do not repeat these)\n")
-        for f in existing_findings:
-            parts.append("- [{}] {} — {}:{}".format(
-                f.severity, f.rule_id, f.file, f.line))
-    parts.append("\nReview the diff and return your findings as JSON.")
-    return "\n\n".join(parts)
+        linter_lines = "\n".join(
+            "- [LINTER][{}] {} — {}:{}  {}".format(
+                f.severity.upper(), f.rule_id, f.file, f.line, f.message)
+            for f in existing_findings
+        )
+    else:
+        linter_lines = "No linter findings for this diff."
+
+    return (template
+            .replace("{contract_summary}", contract_summary)
+            .replace("{linter_findings}", linter_lines))
+
+
+def _build_user_message(diff_text):
+    return (
+        "## Changed files (git diff)\n\n"
+        "```diff\n{}\n```\n\n"
+        "Review the diff and return your findings as JSON."
+    ).format(diff_text)
 
 
 def _call_fm_api(system_prompt, user_message):
@@ -155,8 +164,8 @@ def fm_review(diff_text, contract, existing_findings=None):
         return []
 
     existing_findings = existing_findings or []
-    system_prompt = _build_system_prompt(contract)
-    user_message = _build_user_message(diff_text, existing_findings)
+    system_prompt = _build_system_prompt(contract, existing_findings)
+    user_message = _build_user_message(diff_text)
 
     print("arch-guard [fm]: calling {} ...".format(os.environ.get("FM_ENDPOINT")))
     api_response = _call_fm_api(system_prompt, user_message)

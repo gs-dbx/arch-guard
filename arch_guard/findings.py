@@ -78,12 +78,13 @@ def write_summary(findings, fh, advisory=True, waived=None):
         return
 
     if findings:
-        fh.write("| | Severity | Rule | File:Line | Message |\n")
-        fh.write("|---|---|---|---|---|\n")
+        fh.write("| | Source | Severity | Rule | File:Line | Message |\n")
+        fh.write("|---|---|---|---|---|---|\n")
         for f in sorted(findings, key=lambda x: (x.severity != "error", x.file, x.line)):
             icon = _SEV_ICON.get(f.severity, "")
-            fh.write("| {} | {} | `{}` | `{}:{}` | {} |\n".format(
-                icon, f.severity, f.rule_id, f.file, f.line, f.message))
+            source = ":robot_face: LLM" if f.message.startswith("[LLM]") else ":straight_ruler: Linter"
+            fh.write("| {} | {} | {} | `{}` | `{}:{}` | {} |\n".format(
+                icon, source, f.severity, f.rule_id, f.file, f.line, f.message))
         fh.write("\n")
 
     if waived:
