@@ -93,18 +93,24 @@ jobs:
 
       - name: Set up Python
         run: |
-          # Use system Python on self-hosted runners (avoids SSL cert issues with
-          # actions/setup-python on machines behind a corporate CA).
-          # Falls back to actions/setup-python path if system Python is too old.
-          PYVER=$(python3 --version 2>&1 | awk '{print $2}')
-          echo "arch-guard: using system Python $PYVER"
-          echo "PATH=$(dirname $(which python3)):$PATH" >> $GITHUB_ENV
+          # On Databricks-managed self-hosted runners, the isaac-omni Python 3.12
+          # environment has all required deps pre-installed without needing PyPI.
+          # Fall back to system python3 if not present.
+          if [ -x "/opt/databricks/isaac-omni/bin/python3" ]; then
+            echo "arch-guard: using isaac-omni Python 3.12"
+            echo "PYTHON=/opt/databricks/isaac-omni/bin/python3" >> $GITHUB_ENV
+            echo "PIP=/opt/databricks/isaac-omni/bin/pip3" >> $GITHUB_ENV
+          else
+            echo "arch-guard: using system Python"
+            echo "PYTHON=python3" >> $GITHUB_ENV
+            echo "PIP=pip3" >> $GITHUB_ENV
+          fi
 
       - name: Install arch-guard
         run: |
-          python3 -c "import yaml, jsonschema" 2>/dev/null && \
-            echo "arch-guard: system deps available, skipping pip install." || \
-            pip3 install -r .arch-guard/requirements.txt
+          $PYTHON -c "import yaml, jsonschema, databricks.sdk" 2>/dev/null && \
+            echo "arch-guard: all deps present, skipping pip install." || \
+            $PIP install -r .arch-guard/requirements.txt
 
       - name: Show runner egress IP
         run: |
@@ -137,7 +143,7 @@ jobs:
           if [ "${{ inputs.advisory }}" = "true" ]; then
             ADVISORY_FLAG="--advisory"
           fi
-          PYTHONPATH=.arch-guard python -m arch_guard.check \
+          PYTHONPATH=.arch-guard $PYTHON -m arch_guard.check \
             --contract "${{ inputs.contract }}" \
             --diff-base "$BASE_SHA" \
             --diff-head "$HEAD_SHA" \

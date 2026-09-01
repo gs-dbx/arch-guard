@@ -78,30 +78,31 @@ def _build_user_message(diff_text, existing_findings):
 
 
 def _call_fm_api(system_prompt, user_message):
-    """Call the FM endpoint via the Databricks SDK.
+    """Call the FM endpoint via the Databricks SDK serving_endpoints.query().
 
-    Auth is fully delegated to the SDK — it reads DATABRICKS_AUTH_TYPE,
-    DATABRICKS_HOST, and whichever credentials that auth type requires.
-    No token management here.
+    Uses the SDK directly — no databricks-openai package needed.
+    Auth is fully delegated to the SDK via DATABRICKS_AUTH_TYPE + credentials.
     """
     model = os.environ.get("FM_ENDPOINT", "")
     if not model:
         return None
 
     try:
-        from databricks_openai import DatabricksOpenAI
-        client = DatabricksOpenAI()
-        response = client.chat.completions.create(
-            model=model,
+        from databricks.sdk import WorkspaceClient
+        from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
+
+        w = WorkspaceClient()
+        response = w.serving_endpoints.query(
+            name=model,
             messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": user_message},
+                ChatMessage(role=ChatMessageRole.SYSTEM, content=system_prompt),
+                ChatMessage(role=ChatMessageRole.USER,   content=user_message),
             ],
             temperature=0,
             max_tokens=2048,
         )
-        # Normalise to the dict shape the rest of this module expects
-        return {"choices": [{"message": {"content": response.choices[0].message.content}}]}
+        content = response.choices[0].message.content
+        return {"choices": [{"message": {"content": content}}]}
     except Exception as e:
         print("arch-guard [fm]: API call failed — {}".format(e))
         return None
