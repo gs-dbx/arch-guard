@@ -98,7 +98,6 @@ def _call_fm_api(system_prompt, user_message):
                 ChatMessage(role=ChatMessageRole.SYSTEM, content=system_prompt),
                 ChatMessage(role=ChatMessageRole.USER,   content=user_message),
             ],
-            temperature=0,
             max_tokens=2048,
         )
         content = response.choices[0].message.content
