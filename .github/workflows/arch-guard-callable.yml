@@ -91,14 +91,17 @@ jobs:
           path: .arch-guard
           token: ${{ secrets.ARCH_GUARD_TOKEN || github.token }}
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-          cache-dependency-path: .arch-guard/requirements.txt
+      - name: Set up Python
+        run: |
+          # Use system Python on self-hosted runners (avoids SSL cert issues with
+          # actions/setup-python on machines behind a corporate CA).
+          # Falls back to actions/setup-python path if system Python is too old.
+          PYVER=$(python3 --version 2>&1 | awk '{print $2}')
+          echo "arch-guard: using system Python $PYVER"
+          echo "PATH=$(dirname $(which python3)):$PATH" >> $GITHUB_ENV
 
       - name: Install arch-guard
-        run: pip install -r .arch-guard/requirements.txt
+        run: pip3 install -r .arch-guard/requirements.txt
 
       - name: Show runner egress IP
         run: |
