@@ -16,7 +16,7 @@ on:
         type: boolean
         default: true
       sarif:
-        description: Upload SARIF to GitHub code scanning for inline annotations (opt-in)
+        description: Generate SARIF as a downloadable workflow artifact (opt-in)
         type: boolean
         default: false
       arch_guard_ref:
@@ -164,27 +164,9 @@ jobs:
             $SARIF_FLAG \
             $ADVISORY_FLAG
 
-      - name: Stage optional SARIF
+      - name: Upload optional SARIF artifact
         if: ${{ always() && inputs.sarif }}
         uses: actions/upload-artifact@v4
         with:
           name: arch-guard-sarif
           path: findings.sarif
-
-  upload-sarif:
-    if: ${{ always() && inputs.sarif }}
-    needs: arch-guard
-    runs-on: ${{ inputs.runner }}
-    continue-on-error: true
-    permissions:
-      contents: read
-      security-events: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: arch-guard-sarif
-      - name: Upload SARIF (inline PR annotations)
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: findings.sarif
-          category: arch-guard

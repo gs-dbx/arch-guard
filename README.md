@@ -23,7 +23,7 @@ The deterministic engine consumes `sanctioned_catalogs`, `catalog_convention`, `
 6. Python, SQL, and Databricks Asset Bundle files are parsed into `FileContext` objects and dispatched to registered rules by file type.
 7. If `FM_ENDPOINT` is set, the entire unified diff is reviewed by the FM endpoint. Any API, response-format, or schema error is logged and produces no FM findings.
 8. `.arch-waivers.yaml` is loaded. A non-expired entry suppresses a finding only when `rule_id` and `file` match, plus `line` when the waiver specifies one.
-9. Active findings are written to the Markdown GitHub job summary. Optional SARIF output and code-scanning annotations are available when the caller sets `sarif: true`.
+9. Active findings are written to the Markdown GitHub job summary. Optional SARIF output is available as a downloadable artifact when the caller sets `sarif: true`; organizations may upload it to code scanning separately.
 10. Advisory mode always exits 0. Enforcing mode exits 1 only when an active deterministic error remains; warnings and notes do not block.
 
 ## What is checked

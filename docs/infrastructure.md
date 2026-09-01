@@ -107,7 +107,7 @@ permissions:
   id-token: write
 ```
 
-`id-token: write` is required for OIDC and harmless but unused by the interim M2M path. SARIF is disabled by default because code-scanning availability and token policy vary by organization. Set the reusable workflow input `sarif: true` only where code scanning is available; upload remains `continue-on-error`, and the job summary remains authoritative.
+`id-token: write` is required for OIDC and harmless but unused by the interim M2M path. SARIF is disabled by default because code-scanning availability and token policy vary by organization. Setting `sarif: true` creates a downloadable artifact without requesting `security-events: write`; an organization can upload it separately where code scanning is available. The job summary remains authoritative.
 
 ## 5. Authentication
 
